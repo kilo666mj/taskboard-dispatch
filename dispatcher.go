@@ -213,10 +213,12 @@ func (d *Dispatcher) runClosed(ctx context.Context, run *tracked, heartbeatErr e
 	return !found || current.EndedAt != nil || current.Status != "active"
 }
 
-// finish handles a worker that exited. If its run is still open in
+// finish handles a worker that exited. If its run is still active in
 // Taskboard, the worker stopped without completing, blocking, or escalating:
 // record what was observed and let the lease expire so the task becomes
-// stale for human review. Taskboard never retries automatically.
+// stale for human review. Taskboard never retries automatically. A run the
+// worker blocked or set waiting keeps no end time but is no longer active;
+// it is finished, and Taskboard accepts no handoff for it.
 func (d *Dispatcher) finish(ctx context.Context, run *tracked, status WorkerStatus) {
 	task, err := d.board.GetTask(ctx, run.taskID)
 	if err != nil {
@@ -224,7 +226,7 @@ func (d *Dispatcher) finish(ctx context.Context, run *tracked, status WorkerStat
 		return
 	}
 	current, found := task.RunByID(run.runID)
-	if found && current.EndedAt == nil {
+	if found && current.EndedAt == nil && current.Status == "active" {
 		blocker := fmt.Sprintf("Worker exited with code %d before the run ended.", status.ExitCode)
 		if status.Detail != "" {
 			blocker += " " + status.Detail

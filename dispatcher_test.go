@@ -151,6 +151,21 @@ func (b *fakeBoard) endRun(task *Task, runID, status string) {
 	task.Status = status
 }
 
+// blockTask mirrors Taskboard blocking a task from its run: the run takes
+// the task's status but keeps no end time.
+func (b *fakeBoard) blockTask(taskID, runID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	task := b.tasks[taskID]
+	for index := range task.Runs {
+		if task.Runs[index].ID == runID {
+			task.Runs[index].Status = "blocked"
+		}
+	}
+	task.Status = "blocked"
+	task.Version++
+}
+
 func (b *fakeBoard) finishTask(taskID, runID string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -309,6 +324,24 @@ func TestExitedWorkerWithOpenRunRecordsHandoff(t *testing.T) {
 	}
 	if blocker := board.handoffs[0].Blocker; blocker != "Worker exited with code 3 before the run ended. Detail." {
 		t.Fatalf("blocker = %q", blocker)
+	}
+	if len(dispatcher.Supervising()) != 0 {
+		t.Fatalf("still supervising %v", dispatcher.Supervising())
+	}
+}
+
+func TestExitedWorkerThatBlockedItsTaskIsFinished(t *testing.T) {
+	board, backend := newFakeBoard(), newFakeBackend()
+	board.addTask("task-a")
+	dispatcher := testDispatcher(t, board, backend, 1)
+	dispatcher.Pass(t.Context())
+
+	board.blockTask("task-a", "run0000000001")
+	backend.workers["run0000000001"] = WorkerStatus{State: WorkerExited}
+	dispatcher.Pass(t.Context())
+
+	if kinds := board.handoffKinds(); len(kinds) != 0 {
+		t.Fatalf("handoffs = %v, want none for a blocked run", kinds)
 	}
 	if len(dispatcher.Supervising()) != 0 {
 		t.Fatalf("still supervising %v", dispatcher.Supervising())
